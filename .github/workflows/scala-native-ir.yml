@@ -1,4 +1,4 @@
-name: Scala native - baseline vs InvisiRisk
+name: Scala native - InvisiRisk
 
 on:
   workflow_dispatch:
@@ -19,33 +19,6 @@ env:
   NO_PROXY: app.stage.invisirisk.com,localhost,127.0.0.1
 
 jobs:
-  baseline-native:
-    name: Baseline native sbt
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-      - uses: sbt/setup-sbt@v1
-      - name: Resolve, test, and generate CycloneDX SBOM
-        run: sbt -batch clean update test makeBom
-      - name: Summarize SBOM
-        shell: bash
-        run: |
-          set -euo pipefail
-          bom=$(find target -type f -name '*.bom.json' -print -quit)
-          test -n "${bom}"
-          echo "Baseline SBOM: ${bom}"
-          echo "Components: $(jq '.components | length' "${bom}")"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: scala-native-baseline-cyclonedx
-          path: target/**/*.bom.json
-          if-no-files-found: error
-
   ir-native:
     name: InvisiRisk native sbt
     runs-on: ubuntu-latest
