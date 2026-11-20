@@ -1,0 +1,104 @@
+name: Scala native - baseline vs InvisiRisk
+
+on:
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: Enable verbose InvisiRisk diagnostics
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+  checks: write
+
+env:
+  IR_API_URL: https://app.stage.invisirisk.com
+  NO_PROXY: app.stage.invisirisk.com,localhost,127.0.0.1
+
+jobs:
+  baseline-native:
+    name: Baseline native sbt
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: sbt/setup-sbt@v1
+      - name: Resolve, test, and generate CycloneDX SBOM
+        run: sbt -batch clean update test makeBom
+      - name: Summarize SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          bom=$(find target -type f -name '*.bom.json' -print -quit)
+          test -n "${bom}"
+          echo "Baseline SBOM: ${bom}"
+          echo "Components: $(jq '.components | length' "${bom}")"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scala-native-baseline-cyclonedx
+          path: target/**/*.bom.json
+          if-no-files-found: error
+
+  ir-native:
+    name: InvisiRisk native sbt
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: sbt/setup-sbt@v1
+      - name: Require staging project token
+        shell: bash
+        env:
+          IR_API_KEY: ${{ secrets.IR_API_KEY }}
+        run: |
+          if [[ -z "${IR_API_KEY}" ]]; then
+            echo "::error::Configure the IR_API_KEY repository secret with an owned staging project token."
+            exit 1
+          fi
+      - name: Start InvisiRisk BAF
+        uses: invisirisk/pse-action@1b65605f8d71a0c840878bc90ba262fe7bf7ed2b
+        with:
+          api_url: ${{ env.IR_API_URL }}
+          app_token: ${{ secrets.IR_API_KEY }}
+          job_identifier: scala-native-sbt-${{ github.run_id }}
+          job_label: Scala native sbt
+          workdir: ${{ github.workspace }}
+          collect_dependencies: "true"
+          collect_job_status: "true"
+          debug: ${{ inputs.debug }}
+      - name: Validate BAF readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${PSE_PROXY_IP:-}"
+          test -n "${PSE_CA_CERT_PATH:-}"
+          test -f "${PSE_CA_CERT_PATH}"
+          echo "NO_PROXY=app.stage.invisirisk.com,localhost,127.0.0.1" >> "${GITHUB_ENV}"
+          echo "no_proxy=app.stage.invisirisk.com,localhost,127.0.0.1" >> "${GITHUB_ENV}"
+      - name: Resolve, test, and generate CycloneDX SBOM through IR
+        run: sbt -batch clean update test makeBom
+      - name: Summarize SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          bom=$(find target -type f -name '*.bom.json' -print -quit)
+          test -n "${bom}"
+          echo "IR SBOM: ${bom}"
+          echo "Components: $(jq '.components | length' "${bom}")"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scala-native-ir-cyclonedx
+          path: target/**/*.bom.json
+          if-no-files-found: warn
